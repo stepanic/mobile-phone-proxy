@@ -1,0 +1,50 @@
+name: MobilePhoneProxy
+options:
+  bundleIdPrefix: com.stepanic
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""              # fill in your Apple Developer team ID
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"     # iPhone + iPad
+
+targets:
+  MobilePhoneProxy:
+    type: application
+    platform: iOS
+    sources:
+      - path: MobilePhoneProxy
+    info:
+      path: MobilePhoneProxy/Info.plist
+      properties:
+        CFBundleDisplayName: Mobile Phone Proxy
+        UILaunchScreen: {}
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Required when binding NWListener on local network in iOS 14+.
+        NSLocalNetworkUsageDescription: >-
+          Used to expose an HTTP proxy to other devices on your WiFi so they can
+          tunnel traffic through this phone's cellular connection.
+        # Required by iOS 14+ for the local-network permission flow to work
+        # cleanly with NWListener. We don't actually advertise Bonjour, but
+        # declaring at least one service type is the documented requirement.
+        NSBonjourServices:
+          - _mobilephoneproxy._tcp
+        # Optional: declare we will use cellular when WiFi is also available.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        # Keep app a bit responsive in background — note: TCP listeners still
+        # get suspended; this only buys you a short grace period.
+        UIBackgroundModes:
+          - processing
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.stepanic.mobilephoneproxy
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"

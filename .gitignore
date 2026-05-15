@@ -1,0 +1,8 @@
+# Xcode
+ios/MobilePhoneProxy.xcodeproj/
+ios/MobilePhoneProxy/Info.plist
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
