@@ -6,3 +6,13 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 .DS_Store
+
+# Android
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.cxx/
+*.iml

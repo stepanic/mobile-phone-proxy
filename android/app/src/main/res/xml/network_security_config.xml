@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- The proxy itself terminates plain HTTP CONNECT on the LAN. The actual
+         tunneled payload (almost always TLS) is opaque to the OS and is not
+         affected by cleartext rules. We only need to permit cleartext so the
+         proxy-control HTTP framing on the listener side is allowed. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
