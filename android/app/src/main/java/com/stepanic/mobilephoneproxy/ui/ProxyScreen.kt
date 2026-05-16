@@ -208,7 +208,7 @@ private fun LogCard(log: List<String>) {
                         line,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
-                        maxLines = 2,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }

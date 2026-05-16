@@ -75,11 +75,23 @@ class HttpProxyHandler(
         return try {
             val socket = Socket()
             // Bind the socket to the cellular Network *before* connect() so the
-            // SYN goes out the LTE interface. If we have no cellular network
-            // (simulator, airplane mode), fall back to default routing so we
-            // can still validate the protocol path end-to-end.
-            cellularNetwork?.bindSocket(socket)
-            val addr = if (cellularNetwork != null) {
+            // SYN goes out the LTE interface. Two reasons this might fail:
+            //   - cellularNetwork is null (no SIM / airplane mode / emulator)
+            //   - bindSocket throws EPERM, which happens on Android when an
+            //     always-on VPN (e.g. Tailscale) is active and forbids apps
+            //     from bypassing it to an underlying network. In that case we
+            //     fall back to the system default network — useful when the
+            //     user has turned off WiFi so cellular *is* the default.
+            var bound = false
+            if (cellularNetwork != null) {
+                try {
+                    cellularNetwork.bindSocket(socket)
+                    bound = true
+                } catch (e: java.net.SocketException) {
+                    ProxyState.log("bind to cellular refused (${e.message}); using default route")
+                }
+            }
+            val addr = if (bound && cellularNetwork != null) {
                 // Resolve DNS through the cellular network too — otherwise we'd
                 // ask the WiFi resolver and could leak DNS or get split-horizon
                 // answers.

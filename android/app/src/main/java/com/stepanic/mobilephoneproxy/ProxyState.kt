@@ -60,6 +60,7 @@ object ProxyState {
 
     fun log(line: String) {
         val ts = TS.format(Date())
+        android.util.Log.i("MobilePhoneProxy", line)
         _log.update { prev ->
             val next = prev + "$ts  $line"
             if (next.size > 300) next.subList(next.size - 300, next.size) else next
