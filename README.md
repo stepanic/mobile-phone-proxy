@@ -55,13 +55,20 @@ interface even when WiFi is the system default route:
 
 | Platform | State | Verified on |
 | --- | --- | --- |
-| iOS     | Builds & runs | Source-built only — Apple Developer program required for on-device install |
-| Android | **Working end-to-end** | Xiaomi 17 Ultra on AS205714 Telemach mobile |
+| Android | **Working end-to-end**, hardened over several iterations | Xiaomi 17 Ultra on AS205714 Telemach mobile |
+| iOS     | First-pass port, never run on a real device | — |
 
-The Android build is the one that's been put through traffic; the iOS port
-shares the same protocol logic but hasn't been confirmed on a physical
-device by the author (no paid Apple Developer account at the time of
-writing). PRs from someone with signing capability welcome.
+The Android side has been iterated on against an actual device and real
+mobile traffic — connection lifecycle, hop-by-hop header handling, and the
+always-on-VPN `bindSocket` fallback all came out of fixing things that broke
+in practice.
+
+The iOS side is essentially a single-pass translation of the same protocol
+into Swift/Network.framework. It builds, but the author has no paid Apple
+Developer account and never installed it on a phone. Expect edge cases — at
+minimum around `NWListener` background suspension, half-close behaviour, and
+the cellular-binding path on simulator vs device — to be wrong until someone
+exercises them. PRs from anyone with signing capability are very welcome.
 
 ## Repository layout
 
