@@ -45,7 +45,10 @@ interface even when WiFi is the system default route:
 
 - **iOS** — `NWParameters.requiredInterfaceType = .cellular` on outbound
   `NWConnection`s. iOS routes the connection through the cellular PDP context
-  even though the listener lives on WiFi.
+  even though the listener lives on WiFi. If the system denies the
+  cellular-pinned socket (it can, by policy), the handler retries once on the
+  default route and logs loudly — egress is then cellular **only if WiFi is
+  off**, mirroring the Android fallback below.
 - **Android** — query `ConnectivityManager` for a `Network` with
   `TRANSPORT_CELLULAR + NET_CAPABILITY_INTERNET`, then call
   `network.bindSocket(socket)` before `connect()`. Falls back gracefully if
@@ -56,19 +59,22 @@ interface even when WiFi is the system default route:
 | Platform | State | Verified on |
 | --- | --- | --- |
 | Android | **Working end-to-end**, hardened over several iterations | Xiaomi 17 Ultra on AS205714 Telemach mobile |
-| iOS     | First-pass port, never run on a real device | — |
+| iOS     | **Working end-to-end** on a physical device | iPhone 15 Pro (iOS 26.4.2) on Telemach mobile, remote over Tailscale |
 
 The Android side has been iterated on against an actual device and real
 mobile traffic — connection lifecycle, hop-by-hop header handling, and the
 always-on-VPN `bindSocket` fallback all came out of fixing things that broke
 in practice.
 
-The iOS side is essentially a single-pass translation of the same protocol
-into Swift/Network.framework. It builds, but the author has no paid Apple
-Developer account and never installed it on a phone. Expect edge cases — at
-minimum around `NWListener` background suspension, half-close behaviour, and
-the cellular-binding path on simulator vs device — to be wrong until someone
-exercises them. PRs from anyone with signing capability are very welcome.
+The iOS side started as a single-pass translation of the same protocol into
+Swift/Network.framework and has now been validated on real hardware: built and
+installed on a physical iPhone, reached remotely over Tailscale with the
+phone's WiFi off. A direct request from the laptop exited via the home fiber
+IP; the same request through the phone exited via a different mobile-carrier IP
+in a different city — confirming true cellular egress, the same result the
+Android port produces. The remaining real limitation is background execution
+(see Caveats): iOS suspends a plain-app `NWListener`, so the phone runs as a
+foreground "parked node" rather than a pocketed daemon.
 
 ## Repository layout
 
@@ -76,7 +82,7 @@ exercises them. PRs from anyone with signing capability are very welcome.
 ios/        Swift sources, project.yml for XcodeGen
             – ProxyServer.swift          NWListener + NWConnection wiring
             – HTTPProxyHandler.swift     CONNECT + absolute-URI parser
-            – NetworkInterface.swift     WiFi/cellular IP discovery
+            – NetworkInterface.swift     WiFi/cellular/Tailscale IP discovery
             – ContentView.swift          SwiftUI control panel
 
 android/    Standard AGP project, Compose UI
@@ -101,7 +107,23 @@ open MobilePhoneProxy.xcodeproj
 ```
 
 Fill in `DEVELOPMENT_TEAM` in `project.yml` before regenerating if you want
-to sign with your own team.
+to sign with your own team — or pass it on the command line. To build, install
+and launch on a connected device straight from the CLI:
+
+```bash
+DEV_UDID=$(xcrun xctrace list devices 2>&1 | awk '/\(/{print $NF}' | tr -d '()' | head -1)
+xcodebuild -project MobilePhoneProxy.xcodeproj -scheme MobilePhoneProxy \
+  -destination "id=$DEV_UDID" -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM=YOURTEAMID CODE_SIGN_STYLE=Automatic build
+APP=$(xcodebuild -project MobilePhoneProxy.xcodeproj -scheme MobilePhoneProxy -showBuildSettings 2>/dev/null | awk -F' = ' '/ CODESIGNING_FOLDER_PATH/{print $2}')
+xcrun devicectl device install app --device "$DEV_UDID" "$APP"
+xcrun devicectl device process launch --device "$DEV_UDID" com.stepanic.mobilephoneproxy
+```
+
+A new device must be registered in your team once (Xcode → Signing &
+Capabilities → select the device → *Register Device*); the CLI won't auto-add
+it. On hardware the proxy does **not** auto-start — tap **Start proxy** and
+grant the local-network permission prompt.
 
 ### Android
 
@@ -136,11 +158,30 @@ Or run the included smoke test:
 ./macos/test_proxy.sh 192.168.1.42 8888
 ```
 
+### Remote (phone not on your WiFi)
+
+Put both devices on a [Tailscale](https://tailscale.com) tailnet — no code
+change, the listener already binds all interfaces (including `utun*`). Then:
+
+1. Keep Tailscale on the phone, and **turn the phone's WiFi off** so cellular
+   becomes its default route (otherwise iOS/Android egress over WiFi even with
+   the cellular binding requested).
+2. Point the laptop at the phone's **tailnet** IP — the app shows it as the
+   *Tailscale IP* (iOS) — e.g. `curl -x http://100.x.y.z:8888 https://ifconfig.me/ip`.
+
+The phone egresses over cellular; the Mac reaches it over the tailnet. Note
+that with WiFi off Tailscale falls back to a DERP relay (CGNAT blocks direct
+hole-punching), so throughput is fine for scraping but not low-latency work.
+
 ## Caveats
 
-- iOS suspends arbitrary TCP listeners in the background. The app declares
-  `UIBackgroundModes: processing` which buys you a grace period, but for
-  long-lived sessions keep the screen on.
+- iOS suspends arbitrary TCP listeners in the background (~15 min observed),
+  and there is no foreground-service equivalent like Android's. The app
+  declares `UIBackgroundModes: processing` and keeps the screen awake
+  (`isIdleTimerDisabled`), but the supported model is a **foreground "parked
+  node"**: app open, screen on, on a charger. A pocketed/locked phone will
+  stop serving. (A Tailscale exit node would be the no-app alternative, but
+  iOS cannot *advertise* as an exit node — it can only use one.)
 - Android's foreground-service rules around `dataSync` are strict — the
   service is fine as long as the user-initiated start path is followed.
 - On always-on VPNs (Tailscale, Mullvad, etc.) `bindSocket` may be refused
