@@ -21,6 +21,7 @@ struct ContentView: View {
                     }
                     LabeledContent("WiFi IP", value: server.localIP)
                     LabeledContent("Cellular IP", value: server.cellularIP)
+                    LabeledContent("Tailscale IP", value: server.tailscaleIP)
                     LabeledContent("Bytes ↑", value: ByteCountFormatter.string(fromByteCount: Int64(server.bytesUp), countStyle: .binary))
                     LabeledContent("Bytes ↓", value: ByteCountFormatter.string(fromByteCount: Int64(server.bytesDown), countStyle: .binary))
                 }
@@ -52,8 +53,13 @@ struct ContentView: View {
                 }
 
                 if server.isRunning {
+                    // Remote (parked) model reaches the phone over the tailnet;
+                    // LAN model uses the WiFi IP. Prefer whichever is present,
+                    // Tailscale first since that's the remote use case.
+                    let host = server.tailscaleIP != "—" ? server.tailscaleIP
+                             : (server.localIP != "—" ? server.localIP : "<phone-ip>")
+                    let url = "http://\(host):\(server.port)"
                     Section("Use from Mac") {
-                        let url = "http://\(server.localIP):\(server.port)"
                         Text(url)
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
@@ -61,6 +67,33 @@ struct ContentView: View {
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                             .foregroundStyle(.secondary)
+                    }
+
+                    Section("Parked node (remote)") {
+                        Label {
+                            Text("Tailscale ON · WiFi OFF · screen on · on charger")
+                        } icon: {
+                            Image(systemName: "bolt.fill")
+                        }
+                        .font(.caption)
+                        if server.localIP != "—" {
+                            Label {
+                                Text("WiFi is ON — egress will use WiFi/home IP, not cellular. Turn WiFi OFF.")
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        }
+                        if server.tailscaleIP == "—" {
+                            Label {
+                                Text("No tailnet IP — start Tailscale so the Mac can reach this phone remotely.")
+                            } icon: {
+                                Image(systemName: "network.slash")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        }
                     }
                 }
 

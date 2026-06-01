@@ -8,6 +8,7 @@ final class ProxyServer: ObservableObject {
     @Published var port: UInt16 = 8888
     @Published var localIP: String = "—"
     @Published var cellularIP: String = "—"
+    @Published var tailscaleIP: String = "—"
     @Published var activeConnections: Int = 0
     @Published var bytesUp: UInt64 = 0
     @Published var bytesDown: UInt64 = 0
@@ -96,6 +97,7 @@ final class ProxyServer: ObservableObject {
     private func refreshIPs() {
         localIP = NetworkInterface.address(for: .wifi) ?? "—"
         cellularIP = NetworkInterface.address(for: .cellular) ?? "—"
+        tailscaleIP = NetworkInterface.tailscaleAddress() ?? "—"
     }
 
     private static let timeFormatter: DateFormatter = {

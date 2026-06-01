@@ -150,26 +150,42 @@ enum HTTPProxyHandler {
                                         queue: DispatchQueue) {
         server.logLine("\(req.method) \(req.host):\(req.port)")
 
-        let outboundParams = NWParameters.tcp
-        // On real iOS hardware we force outbound traffic through the cellular
-        // interface. The simulator has no cellular interface, so we fall back
-        // to the default route there — that lets us validate the protocol path
-        // (CONNECT, byte-relay, half-close) end-to-end before deploying.
-        #if !targetEnvironment(simulator)
-        outboundParams.requiredInterfaceType = .cellular
-        outboundParams.prohibitedInterfaceTypes = [.wifi, .wiredEthernet, .loopback]
-        #endif
-        if let tcpOpts = outboundParams.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-            tcpOpts.connectionTimeout = 15
-            tcpOpts.enableKeepalive = true
-            tcpOpts.keepaliveIdle = 30
-        }
-
         guard let nwPort = NWEndpoint.Port(rawValue: req.port) else {
             sendErrorAndClose(client, status: "400 Bad Request", server: server)
             return
         }
-        let upstream = NWConnection(host: NWEndpoint.Host(req.host), port: nwPort, using: outboundParams)
+        openUpstream(req: req, nwPort: nwPort, leftover: leftover,
+                     client: client, server: server, queue: queue, forceCellular: true)
+    }
+
+    /// Builds outbound TCP parameters. On real hardware the first attempt pins the
+    /// socket to the cellular interface; the simulator has no cellular interface so
+    /// it always uses the default route (validates the protocol path end-to-end).
+    private static func makeOutboundParams(forceCellular: Bool) -> NWParameters {
+        let params = NWParameters.tcp
+        #if !targetEnvironment(simulator)
+        if forceCellular {
+            params.requiredInterfaceType = .cellular
+            params.prohibitedInterfaceTypes = [.wifi, .wiredEthernet, .loopback]
+        }
+        #endif
+        if let tcpOpts = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOpts.connectionTimeout = 15
+            tcpOpts.enableKeepalive = true
+            tcpOpts.keepaliveIdle = 30
+        }
+        return params
+    }
+
+    private static func openUpstream(req: ParsedRequest,
+                                     nwPort: NWEndpoint.Port,
+                                     leftover: Data,
+                                     client: NWConnection,
+                                     server: ProxyServer,
+                                     queue: DispatchQueue,
+                                     forceCellular: Bool) {
+        let upstream = NWConnection(host: NWEndpoint.Host(req.host), port: nwPort,
+                                    using: makeOutboundParams(forceCellular: forceCellular))
 
         upstream.stateUpdateHandler = { state in
             switch state {
@@ -198,6 +214,21 @@ enum HTTPProxyHandler {
                     })
                 }
             case .failed(let err):
+                #if !targetEnvironment(simulator)
+                if forceCellular {
+                    // Android-parity fallback (mirrors the bindSocket→default-route
+                    // recovery in the Kotlin port, commit a1cec3d). iOS can deny a
+                    // cellular-pinned socket by system policy ("path unsatisfied").
+                    // Retry once on the default route. This egresses via cellular
+                    // ONLY IF WiFi is OFF (then the default route is pdp_ip0). With
+                    // WiFi ON it would leak the WiFi/home IP — hence the loud log.
+                    server.logLine("⚠️ CELLULAR PATH FAILED (\(err)) — retrying on DEFAULT route. Egress is cellular ONLY if WiFi is OFF.")
+                    upstream.cancel()
+                    openUpstream(req: req, nwPort: nwPort, leftover: leftover,
+                                 client: client, server: server, queue: queue, forceCellular: false)
+                    return
+                }
+                #endif
                 server.logLine("upstream failed (\(req.host)): \(err)")
                 sendErrorAndClose(client, status: "502 Bad Gateway", server: server, upstream: upstream)
             case .cancelled:
