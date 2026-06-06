@@ -6,8 +6,9 @@ laptop at `http://<phone-wifi-ip>:8888` and every request egresses through
 the carrier instead of your home network.
 
 Native apps for **iOS** (Swift / Network.framework) and **Android**
-(Kotlin / `java.net.Socket` bound to the cellular `Network`). No third-party
-dependencies, no servers, no VPN profile.
+(Kotlin / `java.net.Socket` bound to the cellular `Network`), plus a
+**Windows/desktop** build (Go, single static `.exe`) for the "parked node"
+case. No third-party dependencies, no servers, no VPN profile.
 
 ## Why
 
@@ -60,6 +61,7 @@ interface even when WiFi is the system default route:
 | --- | --- | --- |
 | Android | **Working end-to-end**, hardened over several iterations | Xiaomi 17 Ultra on AS205714 Telemach mobile |
 | iOS     | **Working end-to-end** on a physical device | iPhone 15 Pro (iOS 26.4.2) on Telemach mobile, remote over Tailscale |
+| Windows | **Working** — protocol smoke-tested, cross-compiles to a static `.exe` | macOS-built `proxy.exe` (PE32+), relay verified on the build host |
 
 The Android side has been iterated on against an actual device and real
 mobile traffic — connection lifecycle, hop-by-hop header handling, and the
@@ -90,6 +92,11 @@ android/    Standard AGP project, Compose UI
             – HttpProxyHandler.kt        Same protocol as the Swift version
             – NetworkInterfaces.kt       WiFi/cellular Network lookup
             – ui/ProxyScreen.kt          Material 3 control panel
+
+windows/    Go source for the desktop build (no cgo, single static .exe)
+            – proxy.go                   Same protocol as the mobile handlers
+            – build.sh                   Cross-compile from macOS/Linux
+            – README.md                  Build + run instructions
 
 macos/      test_proxy.sh — quick smoke test from your laptop
 ```
@@ -139,6 +146,24 @@ cp local.properties.example local.properties      # then point sdk.dir at your S
 The app then needs WiFi (for the listener) **and** mobile data (for egress)
 active simultaneously. On modern Android you also need to grant the
 notification permission so the foreground service can stay alive.
+
+### Windows / desktop
+
+Requires Go 1.21+ **only on the build host** — the produced `.exe` needs
+nothing on the target machine. No Windows build machine is needed; Go
+cross-compiles a fully static native binary:
+
+```bash
+cd windows
+./build.sh                 # -> dist/proxy.exe (windows/amd64)
+# == GOOS=windows GOARCH=amd64 go build -o dist/proxy.exe ./
+```
+
+Copy `proxy.exe` to the Windows box and double-click it (or `.\proxy.exe -port
+9000 -verbose`). Unlike the phones there's no cellular interface to pin to, so
+egress follows the system default route — ideal as a Tailscale-reachable
+"parked node". See [`windows/README.md`](windows/README.md) for flags and the
+optional `-bind <source-ip>` for multi-interface machines.
 
 ## Use
 

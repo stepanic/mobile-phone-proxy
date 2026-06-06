@@ -7,6 +7,10 @@ DerivedData/
 xcuserdata/
 .DS_Store
 
+# Windows / Go
+windows/dist/
+windows/*.exe
+
 # Android
 android/.gradle/
 android/.idea/
