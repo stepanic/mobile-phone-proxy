@@ -11,7 +11,11 @@ ARCH="${1:-amd64}"
 OUT="dist/proxy.exe"
 [[ "$ARCH" == "arm64" ]] && OUT="dist/proxy-arm64.exe"
 
+# Version from git tag (fallback to short SHA) unless overridden via VERSION=...
+VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+
 mkdir -p dist
-GOOS=windows GOARCH="$ARCH" go build -trimpath -ldflags "-s -w" -o "$OUT" ./
-echo "built $OUT"
+GOOS=windows GOARCH="$ARCH" go build -trimpath \
+  -ldflags "-s -w -X main.version=$VERSION" -o "$OUT" ./
+echo "built $OUT ($VERSION)"
 file "$OUT" 2>/dev/null || true

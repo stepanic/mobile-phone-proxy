@@ -43,6 +43,9 @@ const (
 	relayBufSize   = 32 * 1024
 )
 
+// version is stamped at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 var (
 	verbose  bool
 	dialer   net.Dialer
@@ -55,7 +58,13 @@ func main() {
 	host := flag.String("host", "0.0.0.0", "listen address (0.0.0.0 = all interfaces)")
 	bind := flag.String("bind", "", "optional outbound source IP to pin egress to a specific interface")
 	flag.BoolVar(&verbose, "verbose", false, "log every request line")
+	showVer := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("MobilePhoneProxy %s\n", version)
+		return
+	}
 
 	dialer = net.Dialer{Timeout: connectTimeout}
 	if *bind != "" {
@@ -72,7 +81,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen %s: %v", addr, err)
 	}
-	log.Printf("MobilePhoneProxy listening on %s", addr)
+	log.Printf("MobilePhoneProxy %s listening on %s", version, addr)
 	for _, ip := range listenURLs(*port) {
 		log.Printf("  proxy URL: %s", ip)
 	}
