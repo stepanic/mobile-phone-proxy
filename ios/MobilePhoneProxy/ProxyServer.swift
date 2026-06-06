@@ -9,6 +9,9 @@ final class ProxyServer: ObservableObject {
     @Published var localIP: String = "—"
     @Published var cellularIP: String = "—"
     @Published var tailscaleIP: String = "—"
+    @Published var keepAliveEnabled: Bool = false
+
+    private let keepAlive = BackgroundAudioKeepAlive()
     @Published var activeConnections: Int = 0
     @Published var bytesUp: UInt64 = 0
     @Published var bytesDown: UInt64 = 0
@@ -44,6 +47,7 @@ final class ProxyServer: ObservableObject {
                     case .ready:
                         self.isRunning = true
                         self.refreshIPs()
+                        self.updateKeepAlive()
                         self.append("Listening on port \(self.port)")
                         self.ipRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
                             Task { @MainActor in self.refreshIPs() }
@@ -71,6 +75,18 @@ final class ProxyServer: ObservableObject {
         isRunning = false
         ipRefreshTimer?.invalidate()
         ipRefreshTimer = nil
+        keepAlive.stop()
+    }
+
+    /// Starts/stops the silent-audio background keepalive to match current state.
+    /// Call after the listener becomes ready, after stop, and when the toggle flips.
+    func updateKeepAlive() {
+        keepAlive.onLog = { [weak self] line in self?.logLine(line) }
+        if isRunning && keepAliveEnabled {
+            keepAlive.start()
+        } else {
+            keepAlive.stop()
+        }
     }
 
     nonisolated func recordUp(_ n: Int) {

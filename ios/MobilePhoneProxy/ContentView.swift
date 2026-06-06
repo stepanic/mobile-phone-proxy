@@ -50,6 +50,18 @@ struct ContentView: View {
                             Label("Start proxy", systemImage: "play.fill")
                         }
                     }
+
+                    Toggle(isOn: $server.keepAliveEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Keep alive in background (audio)")
+                            Text("Plays silent audio so the proxy survives screen-lock. Costs battery; may pause on a call.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .onChange(of: server.keepAliveEnabled) { _ in
+                        server.updateKeepAlive()
+                    }
                 }
 
                 if server.isRunning {
