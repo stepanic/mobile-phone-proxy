@@ -28,3 +28,12 @@ struct VerifyRotateCommandIntent: AppIntent {
         return .result(value: verdict.isAccepted)
     }
 }
+
+/// Registers the app's actions with Shortcuts so the app is listed there
+/// (and its actions are indexed) without first being used from a shortcut.
+struct MobilePhoneProxyShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: VerifyRotateCommandIntent(),
+                    phrases: ["Verify rotate command in \(.applicationName)"])
+    }
+}

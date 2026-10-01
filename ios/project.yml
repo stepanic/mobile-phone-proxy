@@ -22,6 +22,10 @@ targets:
       path: MobilePhoneProxy/Info.plist
       properties:
         CFBundleDisplayName: Mobile Phone Proxy
+        # iOS re-indexes App Intents (Shortcuts actions) only when the build
+        # number changes — bump CURRENT_PROJECT_VERSION for every device build.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UIRequiresFullScreen: false
         UISupportedInterfaceOrientations:
@@ -54,4 +58,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stepanic.mobilephoneproxy
+        MARKETING_VERSION: "1.1"
+        CURRENT_PROJECT_VERSION: "2"
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
