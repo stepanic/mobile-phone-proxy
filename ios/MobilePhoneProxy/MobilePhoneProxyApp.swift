@@ -8,6 +8,7 @@ struct MobilePhoneProxyApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(server)
+                .onOpenURL { url in server.handleCallback(url) }
                 .onAppear {
                     UIApplication.shared.isIdleTimerDisabled = true
                     #if targetEnvironment(simulator)

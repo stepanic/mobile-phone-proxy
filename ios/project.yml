@@ -40,6 +40,11 @@ targets:
         # Optional: declare we will use cellular when WiFi is also available.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # Callback scheme for the "Rotate IP" shortcut (x-success / x-error).
+        CFBundleURLTypes:
+          - CFBundleURLName: com.stepanic.mobilephoneproxy
+            CFBundleURLSchemes:
+              - mobilephoneproxy
         # `audio` lets the silent-audio keepalive (BackgroundAudioKeepAlive) hold
         # the process — and thus the NWListener — alive with the screen locked.
         # `processing` alone only buys a short grace period for TCP listeners.

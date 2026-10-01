@@ -148,6 +148,14 @@ enum HTTPProxyHandler {
                                         client: NWConnection,
                                         server: ProxyServer,
                                         queue: DispatchQueue) {
+        // Origin-form target ("/__rotate") means the client is talking to us as a
+        // plain web server, not as a proxy (a proxied request carries an absolute
+        // URI or CONNECT). Answer locally — forwarding it would loop back to us.
+        if !req.isConnect, req.target.hasPrefix("/") {
+            handleControl(req, client: client, server: server)
+            return
+        }
+
         server.logLine("\(req.method) \(req.host):\(req.port)")
 
         guard let nwPort = NWEndpoint.Port(rawValue: req.port) else {
@@ -156,6 +164,21 @@ enum HTTPProxyHandler {
         }
         openUpstream(req: req, nwPort: nwPort, leftover: leftover,
                      client: client, server: server, queue: queue, forceCellular: true)
+    }
+
+    private static func handleControl(_ req: ParsedRequest, client: NWConnection, server: ProxyServer) {
+        let path = req.target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? req.target
+        Task { @MainActor in
+            let (status, json) = server.handleControl(path: path)
+            let body = Data(json.utf8)
+            let head = "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+            var out = Data(head.utf8)
+            out.append(body)
+            client.send(content: out, isComplete: true, completion: .contentProcessed { _ in
+                client.cancel()
+                server.connectionClosed()
+            })
+        }
     }
 
     /// Builds outbound TCP parameters. On real hardware the first attempt pins the

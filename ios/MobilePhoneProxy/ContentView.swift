@@ -37,6 +37,10 @@ struct ContentView: View {
                         }
                     }
                     LabeledContent("Tailscale IP", value: server.tailscaleIP)
+                    LabeledContent("Guided Access", value: server.guidedAccess ? "ON (kiosk)" : "off")
+                    if let started = server.rotateStartedAt {
+                        LabeledContent("Rotating IP", value: "since \(started.formatted(date: .omitted, time: .standard))")
+                    }
                     LabeledContent("Bytes ↑", value: ByteCountFormatter.string(fromByteCount: Int64(server.bytesUp), countStyle: .binary))
                     LabeledContent("Bytes ↓", value: ByteCountFormatter.string(fromByteCount: Int64(server.bytesDown), countStyle: .binary))
                 }

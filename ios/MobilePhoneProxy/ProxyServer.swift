@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Combine
+import UIKit
 
 @MainActor
 final class ProxyServer: ObservableObject {
@@ -13,6 +14,12 @@ final class ProxyServer: ObservableObject {
     @Published var publicIPCheckedAt: Date?
     @Published var isCheckingPublicIP = false
     @Published var keepAliveEnabled: Bool = false
+    @Published var guidedAccess = UIAccessibility.isGuidedAccessEnabled
+    /// Set while the "Rotate IP" shortcut is believed to be running.
+    @Published var rotateStartedAt: Date?
+
+    /// Name of the user-created Shortcut: Airplane ON → Wait 61 s → Airplane OFF.
+    static let rotateShortcutName = "Rotate IP"
 
     private let keepAlive = BackgroundAudioKeepAlive()
     @Published var activeConnections: Int = 0
@@ -135,6 +142,85 @@ final class ProxyServer: ObservableObject {
             if isRunning, newCellular != "—" { refreshPublicIP() }
         }
         tailscaleIP = NetworkInterface.tailscaleAddress() ?? "—"
+        guidedAccess = UIAccessibility.isGuidedAccessEnabled
+    }
+
+    // MARK: - Control endpoint (GET /__status, GET /__rotate)
+
+    func handleControl(path: String) -> (status: String, json: String) {
+        switch path {
+        case "/__status":
+            return ("200 OK", statusJSON())
+        case "/__rotate":
+            return requestRotate()
+        default:
+            return ("404 Not Found", #"{"error":"unknown path"}"#)
+        }
+    }
+
+    private func statusJSON(extra: [String: Any] = [:]) -> String {
+        var d: [String: Any] = [
+            "publicIP": publicIP,
+            "cellularIP": cellularIP,
+            "tailscaleIP": tailscaleIP,
+            "wifiIP": localIP,
+            "appActive": UIApplication.shared.applicationState == .active,
+            "guidedAccess": UIAccessibility.isGuidedAccessEnabled,
+            "rotating": rotateStartedAt != nil,
+        ]
+        if let at = publicIPCheckedAt { d["publicIPCheckedAt"] = ISO8601DateFormatter().string(from: at) }
+        d.merge(extra) { _, new in new }
+        let data = (try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// iOS gives apps no API to toggle Airplane Mode, but Shortcuts has a
+    /// "Set Airplane Mode" action. We launch the user's shortcut by URL; the
+    /// x-success/x-error callbacks bring this app back to the foreground.
+    /// Opening another app only works while we are the foreground app.
+    private func requestRotate() -> (status: String, json: String) {
+        if let started = rotateStartedAt, Date().timeIntervalSince(started) < 180 {
+            return ("409 Conflict", statusJSON(extra: ["error": "rotation already in progress"]))
+        }
+        guard UIApplication.shared.applicationState == .active else {
+            return ("409 Conflict", statusJSON(extra: ["error": "app is not in the foreground; iOS only lets the foreground app open Shortcuts"]))
+        }
+        var c = URLComponents(string: "shortcuts://x-callback-url/run-shortcut")!
+        c.queryItems = [
+            URLQueryItem(name: "name", value: Self.rotateShortcutName),
+            URLQueryItem(name: "x-success", value: "mobilephoneproxy://rotate-done"),
+            URLQueryItem(name: "x-cancel", value: "mobilephoneproxy://rotate-cancel"),
+            URLQueryItem(name: "x-error", value: "mobilephoneproxy://rotate-error"),
+        ]
+        guard let url = c.url else { return ("500 Internal Server Error", #"{"error":"bad url"}"#) }
+        rotateStartedAt = Date()
+        append("Rotate requested — opening shortcut \"\(Self.rotateShortcutName)\" (public IP \(publicIP))")
+        // Delay so the HTTP 202 reaches the Mac before airplane mode cuts the link.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            UIApplication.shared.open(url) { [weak self] ok in
+                guard let self, !ok else { return }
+                self.rotateStartedAt = nil
+                self.append("Rotate failed: iOS refused to open Shortcuts (Guided Access on?)")
+            }
+        }
+        return ("202 Accepted", statusJSON(extra: ["started": true]))
+    }
+
+    /// Callback from Shortcuts (x-success / x-cancel / x-error).
+    func handleCallback(_ url: URL) {
+        guard url.scheme == "mobilephoneproxy" else { return }
+        let outcome = url.host ?? "?"
+        let elapsed = rotateStartedAt.map { String(format: "%.0f s", Date().timeIntervalSince($0)) } ?? "?"
+        rotateStartedAt = nil
+        if outcome == "rotate-done" {
+            append("Rotate shortcut finished after \(elapsed)")
+        } else {
+            let msg = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "errorMessage" })?.value ?? ""
+            append("Rotate shortcut \(outcome) after \(elapsed) \(msg)")
+        }
+        refreshIPs()
+        refreshPublicIP()
     }
 
     /// Asks an external service for the public (post-CGNAT) address over cellular.
