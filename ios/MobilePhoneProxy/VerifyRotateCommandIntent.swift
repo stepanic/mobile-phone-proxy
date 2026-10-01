@@ -23,7 +23,9 @@ struct VerifyRotateCommandIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        IntentEventLog.record("invoked", message: message)
         let verdict = RotateAuth.verify(message)
+        IntentEventLog.record(verdict.description)
         ProxyServer.current?.rotateCommandVerified(verdict)
         return .result(value: verdict.isAccepted)
     }

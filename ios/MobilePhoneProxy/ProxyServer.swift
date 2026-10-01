@@ -157,12 +157,14 @@ final class ProxyServer: ObservableObject {
         if let until = pairingOpenUntil, until <= Date() { pairingOpenUntil = nil }
     }
 
-    // MARK: - Control endpoint (GET /__status, GET /__rotate)
+    // MARK: - Control endpoint (GET /__status, /__log, /__rotate, /__pair)
 
     func handleControl(path: String) -> (status: String, json: String) {
         switch path {
         case "/__status":
             return ("200 OK", statusJSON())
+        case "/__log":
+            return ("200 OK", logJSON())
         case "/__rotate":
             return requestRotate()
         case "/__pair":
@@ -195,7 +197,15 @@ final class ProxyServer: ObservableObject {
             "paired": RotateAuth.isPaired,
         ]
         if let at = publicIPCheckedAt { d["publicIPCheckedAt"] = ISO8601DateFormatter().string(from: at) }
+        if let last = lastRotateCommand { d["lastRotateCommand"] = last }
         d.merge(extra) { _, new in new }
+        let data = (try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// In-memory app log plus the persistent App Intent record (see IntentEventLog).
+    private func logJSON() -> String {
+        let d: [String: Any] = ["lines": log, "intentEvents": IntentEventLog.events]
         let data = (try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys])) ?? Data()
         return String(data: data, encoding: .utf8) ?? "{}"
     }
