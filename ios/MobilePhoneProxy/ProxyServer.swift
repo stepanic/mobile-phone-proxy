@@ -253,7 +253,8 @@ final class ProxyServer: ObservableObject {
             UIApplication.shared.open(url) { [weak self] ok in
                 guard let self, !ok else { return }
                 self.rotateStartedAt = nil
-                self.append("Rotate failed: iOS refused to open Shortcuts (Guided Access on?)")
+                self.append("Rotate failed: iOS refused to open Shortcuts (Guided or Assistive Access on?)")
+                self.finishRelayJob(ok: false, detail: "iOS refused to open Shortcuts (Guided or Assistive Access on?)")
             }
         }
         return ("202 Accepted", statusJSON(extra: ["started": true]))

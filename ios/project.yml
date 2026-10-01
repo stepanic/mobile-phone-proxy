@@ -62,6 +62,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stepanic.mobilephoneproxy
         MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "4"
+        CURRENT_PROJECT_VERSION: "5"
         MPP_RELAY_PHONE_ID: iphone
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
