@@ -21,6 +21,21 @@ struct ContentView: View {
                     }
                     LabeledContent("WiFi IP", value: server.localIP)
                     LabeledContent("Cellular IP", value: server.cellularIP)
+                    LabeledContent {
+                        HStack(spacing: 6) {
+                            if server.isCheckingPublicIP { ProgressView().controlSize(.mini) }
+                            Text(server.publicIP).textSelection(.enabled)
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Public IP")
+                            if let at = server.publicIPCheckedAt {
+                                Text("checked \(at.formatted(date: .omitted, time: .standard))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     LabeledContent("Tailscale IP", value: server.tailscaleIP)
                     LabeledContent("Bytes ↑", value: ByteCountFormatter.string(fromByteCount: Int64(server.bytesUp), countStyle: .binary))
                     LabeledContent("Bytes ↓", value: ByteCountFormatter.string(fromByteCount: Int64(server.bytesDown), countStyle: .binary))
@@ -37,6 +52,12 @@ struct ContentView: View {
                             .frame(width: 100)
                     }
                     if server.isRunning {
+                        Button {
+                            server.refreshPublicIP()
+                        } label: {
+                            Label("Check public IP now", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(server.isCheckingPublicIP)
                         Button(role: .destructive) {
                             server.stop()
                         } label: {

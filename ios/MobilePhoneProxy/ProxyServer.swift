@@ -9,6 +9,9 @@ final class ProxyServer: ObservableObject {
     @Published var localIP: String = "—"
     @Published var cellularIP: String = "—"
     @Published var tailscaleIP: String = "—"
+    @Published var publicIP: String = "—"
+    @Published var publicIPCheckedAt: Date?
+    @Published var isCheckingPublicIP = false
     @Published var keepAliveEnabled: Bool = false
 
     private let keepAlive = BackgroundAudioKeepAlive()
@@ -20,6 +23,8 @@ final class ProxyServer: ObservableObject {
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "proxy.listener", qos: .userInitiated)
     private var ipRefreshTimer: Timer?
+    private var publicIPTimer: Timer?
+    private let lookupQueue = DispatchQueue(label: "proxy.publicip")
 
     func start() {
         guard listener == nil, let nwPort = NWEndpoint.Port(rawValue: port) else { return }
@@ -52,6 +57,10 @@ final class ProxyServer: ObservableObject {
                         self.ipRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
                             Task { @MainActor in self.refreshIPs() }
                         }
+                        self.refreshPublicIP()
+                        self.publicIPTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+                            Task { @MainActor in self.refreshPublicIP() }
+                        }
                     case .failed(let err):
                         self.append("Listener failed: \(err)")
                         self.stop()
@@ -75,6 +84,8 @@ final class ProxyServer: ObservableObject {
         isRunning = false
         ipRefreshTimer?.invalidate()
         ipRefreshTimer = nil
+        publicIPTimer?.invalidate()
+        publicIPTimer = nil
         keepAlive.stop()
     }
 
@@ -112,8 +123,40 @@ final class ProxyServer: ObservableObject {
 
     private func refreshIPs() {
         localIP = NetworkInterface.address(for: .wifi) ?? "—"
-        cellularIP = NetworkInterface.address(for: .cellular) ?? "—"
+        let newCellular = NetworkInterface.address(for: .cellular) ?? "—"
+        if newCellular != cellularIP {
+            // A new carrier-internal address (e.g. after airplane mode) is the
+            // moment the CGNAT public address may have changed too — re-check now
+            // instead of waiting for the 30 s timer.
+            if cellularIP != "—" || newCellular != "—" {
+                append("Cellular IP \(cellularIP) → \(newCellular)")
+            }
+            cellularIP = newCellular
+            if isRunning, newCellular != "—" { refreshPublicIP() }
+        }
         tailscaleIP = NetworkInterface.tailscaleAddress() ?? "—"
+    }
+
+    /// Asks an external service for the public (post-CGNAT) address over cellular.
+    func refreshPublicIP() {
+        guard !isCheckingPublicIP else { return }
+        isCheckingPublicIP = true
+        PublicIP.fetch(queue: lookupQueue) { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isCheckingPublicIP = false
+                switch result {
+                case .success(let ip):
+                    if ip != self.publicIP {
+                        self.append("Public IP \(self.publicIP) → \(ip)")
+                        self.publicIP = ip
+                    }
+                    self.publicIPCheckedAt = Date()
+                case .failure(let error):
+                    self.append("Public IP lookup failed: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     private static let timeFormatter: DateFormatter = {
