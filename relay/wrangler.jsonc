@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mpp-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "account_id": "7dc7167b7e2e00923bfa7cd697df14e4",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "PHONE", "class_name": "Phone" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Phone"] }]
+  // Secret PHONE_TOKENS: JSON {"<phoneId>": "<hex token>"}; the token is
+  // printed by `macos/rotate-ip.sh --relay-token <phoneId>`.
+}
