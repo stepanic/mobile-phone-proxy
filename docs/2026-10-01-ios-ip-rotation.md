@@ -12,7 +12,7 @@ iPhone 15 Pro s iOS 26.4.2, a Mac ga dohvaća preko Tailscalea (`100.71.146.11:8
 | Airplane mode ≤ 61 s → ista IP | ✅ 4/4 (20, 32, 61, 61 s) |
 | Okidač s Maca: `GET /__rotate` → Prečaci po URL-u | ✅ 4/4, ali **samo kad je aplikacija u prvom planu i nije uključen kiosk način** |
 | Okidač s Maca: potpisani iMessage → automatizacija → App Intent | ✅ izvan Assistive Accessa; ❌ **u Assistive Accessu App Intent se ne pokrene** (0/3, poruke isporučene) |
-| **Relay** (Cloudflare Worker + WebSocket) → aplikacija → Prečaci po URL-u | ✅ 2/2 (97 s i 110 s), bez Tailscalea; aplikacija mora biti u prvom planu, bez kiosk načina |
+| **Relay** (Cloudflare Worker + WebSocket) → aplikacija → Prečaci po URL-u | ✅ 2/2 (97 s i 110 s), bez Tailscalea; aplikacija mora biti u prvom planu, bez kiosk načina. ❌ u Assistive Accessu: iOS odbija `shortcuts://` (19:05:41) |
 | Guided Access | ❌ blokira otvaranje Prečaca |
 | Assistive Access | ✅ vremenska automatizacija i iMessage `MPP-TEST` (bez App Intenta) rade |
 
@@ -198,9 +198,15 @@ prazan. Korisnik je odlučio da kiosk način nije nužan, pa je to ostavljeno.
 
 ## Otvoreno
 
-- Ako Assistive Access ipak zatreba: izbaciti App Intent iz lanca, tako da
-  prečac radi `Get Contents of URL` na `http://127.0.0.1:8888/…` i aplikacija
-  sama provjeri potpis.
+- **Relay u Assistive Accessu ne radi** (test 19:05): naredba prihvaćena, ali
+  `Rotate failed: iOS refused to open Shortcuts`. Telefon je ostao online.
+  Build 5 (commitan, nije instaliran) tada odmah javlja `failed` relayu umjesto
+  da posao čeka 6 min. Ako kiosk zatreba, kandidati za „zvono" koje
+  automatizacija vidi: (A) automatizacija „App is Closed", a aplikacija se
+  zatvori samo na provjerenu naredbu; (B) Mac šalje iMessage, a prečac preko
+  `Get Contents of URL http://127.0.0.1:8888/…` pita aplikaciju čeka li
+  provjerena naredba. Oboje netestirano.
+- **Flota telefona**: plan u `2026-10-01-relay-fleet-design.md`.
 - **Android** to može bez ovih zaobilaznica: Shizuku (ovlasti na razini ADB-a,
   bez roota) → `cmd connectivity airplane-mode enable/disable` iz same
   aplikacije, a kiosk se dobije pinanjem ekrana. Na uređaju još nije isprobano.
