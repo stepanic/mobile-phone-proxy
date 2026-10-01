@@ -141,8 +141,9 @@ struct ContentView: View {
                     }
                 }
 
-                Section("iMessage rotate") {
+                Section("iMessage / relay rotate") {
                     LabeledContent("Mac paired", value: server.isPaired ? "yes" : "no")
+                    LabeledContent("Relay", value: server.relayState)
                     if let last = server.lastRotateCommand {
                         LabeledContent("Last command", value: last)
                     }

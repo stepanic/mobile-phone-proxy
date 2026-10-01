@@ -82,6 +82,16 @@ enum RotateAuth {
 
     static var isPaired: Bool { Keychain.load() != nil }
 
+    /// WebSocket credential for the relay Worker, derived from the paired
+    /// secret so nothing extra has to be provisioned on the phone. The Mac
+    /// computes the same value (`rotate-ip.sh --relay-token`).
+    static func relayToken(phoneID: String) -> String? {
+        guard let secret = Keychain.load() else { return nil }
+        let mac = HMAC<SHA256>.authenticationCode(for: Data("MPP-RELAY|v1|\(phoneID)".utf8),
+                                                  using: SymmetricKey(data: secret))
+        return mac.map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Returns the existing secret or creates one. Shared with the Mac once,
     /// over the tailnet, while the user has the pairing window open.
     static func secretForPairing() -> Data {

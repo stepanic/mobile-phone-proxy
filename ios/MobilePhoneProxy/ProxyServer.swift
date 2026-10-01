@@ -21,6 +21,12 @@ final class ProxyServer: ObservableObject {
     @Published var isPaired = RotateAuth.isPaired
     @Published var pairingOpenUntil: Date?
     @Published var lastRotateCommand: String?
+    @Published var relayState = "off"
+
+    private let relay = RelayClient()
+    /// Relay job being executed, reported back once the new public IP is known.
+    private var relayJob: (id: String, oldIP: String, awaitingIP: Bool)?
+    private var relayReportedIP = ""
 
     /// The live instance, for App Intents (they run in-process but outside SwiftUI).
     static weak var current: ProxyServer?
@@ -72,6 +78,7 @@ final class ProxyServer: ObservableObject {
                         self.refreshIPs()
                         self.updateKeepAlive()
                         self.append("Listening on port \(self.port)")
+                        self.startRelay()
                         self.ipRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
                             Task { @MainActor in self.refreshIPs() }
                         }
@@ -105,6 +112,7 @@ final class ProxyServer: ObservableObject {
         publicIPTimer?.invalidate()
         publicIPTimer = nil
         keepAlive.stop()
+        relay.stop()
     }
 
     /// Starts/stops the silent-audio background keepalive to match current state.
@@ -150,7 +158,10 @@ final class ProxyServer: ObservableObject {
                 append("Cellular IP \(cellularIP) → \(newCellular)")
             }
             cellularIP = newCellular
-            if isRunning, newCellular != "—" { refreshPublicIP() }
+            if isRunning, newCellular != "—" {
+                refreshPublicIP()
+                relay.reconnectNow()
+            }
         }
         tailscaleIP = NetworkInterface.tailscaleAddress() ?? "—"
         guidedAccess = UIAccessibility.isGuidedAccessEnabled
@@ -173,6 +184,12 @@ final class ProxyServer: ObservableObject {
         case "/__open-pairing":
             // Simulator-only stand-in for tapping "Pair Mac".
             openPairingWindow()
+            return ("200 OK", #"{"ok":true}"#)
+        case let p where p.hasPrefix("/__callback/"):
+            // Simulator-only stand-in for the shortcut's x-success / x-error
+            // (the simulator has no "Rotate IP" shortcut, and simctl openurl
+            // prompts before opening the app).
+            handleCallback(URL(string: "mobilephoneproxy://" + p.dropFirst("/__callback/".count))!)
             return ("200 OK", #"{"ok":true}"#)
         case let p where p.hasPrefix("/__verify/"):
             // Simulator-only hook to test Mac-side signing against CryptoKit.
@@ -255,6 +272,7 @@ final class ProxyServer: ObservableObject {
     func unpair() {
         RotateAuth.unpair()
         isPaired = false
+        relay.stop()
         append("Unpaired — signed rotate commands now rejected")
     }
 
@@ -265,14 +283,77 @@ final class ProxyServer: ObservableObject {
         let secret = RotateAuth.secretForPairing()
         pairingOpenUntil = nil
         isPaired = true
+        if isRunning { startRelay() }
         append("Paired with Mac — signed iMessage rotate commands enabled")
         return ("200 OK", "{\"secret\":\"\(secret.base64EncodedString())\"}")
     }
 
-    func rotateCommandVerified(_ verdict: RotateAuth.Verdict) {
+    func rotateCommandVerified(_ verdict: RotateAuth.Verdict, via source: String = "iMessage") {
         let ts = Self.timeFormatter.string(from: Date())
-        lastRotateCommand = "\(ts) \(verdict.description)"
-        append("iMessage rotate command \(verdict.description)")
+        lastRotateCommand = "\(ts) \(source) \(verdict.description)"
+        append("\(source) rotate command \(verdict.description)")
+    }
+
+    // MARK: - Relay
+
+    private func startRelay() {
+        relay.onState = { [weak self] s in self?.relayState = s }
+        relay.onLog = { [weak self] line in self?.append(line) }
+        relay.helloInfo = { [weak self] in
+            var d: [String: Any] = ["build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"]
+            if let ip = self?.publicIP, ip != "—" { d["publicIP"] = ip }
+            return d
+        }
+        relay.onCommand = { [weak self] jobId, command in self?.relayCommand(jobId: jobId, command: command) }
+        relay.start()
+    }
+
+    /// A signed command from the relay: verify it here (the relay can't), then
+    /// run the same URL trigger as GET /__rotate.
+    private func relayCommand(jobId: String, command: String) {
+        let verdict = RotateAuth.verify(command)
+        rotateCommandVerified(verdict, via: "Relay")
+        var ack: [String: Any] = ["type": "ack", "jobId": jobId, "verdict": verdict.description]
+        if publicIP != "—" { ack["publicIP"] = publicIP }
+        relay.send(ack)
+        guard verdict.isAccepted else { return }
+
+        let (status, json) = requestRotate()
+        if status.hasPrefix("202") {
+            relayJob = (jobId, publicIP, false)
+            relay.send(["type": "rotating", "jobId": jobId])
+        } else {
+            let why = (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["error"] as? String
+            relay.send(["type": "result", "jobId": jobId, "ok": false, "detail": why ?? status])
+        }
+    }
+
+    /// Called once the shortcut has returned; reports when the public IP is known.
+    private func finishRelayJob(ok: Bool, detail: String? = nil) {
+        // Once the shortcut has reported success, a later callback can't undo it.
+        guard let job = relayJob, !job.awaitingIP else { return }
+        if ok {
+            // Wait for the post-airplane public IP lookup (refreshPublicIP),
+            // but don't hold the job forever if lookups keep failing.
+            relayJob?.awaitingIP = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+                guard let self, self.relayJob?.id == job.id else { return }
+                self.sendRelayResult(detail: "public IP lookup did not succeed within 60 s")
+            }
+            return
+        }
+        relayJob = nil
+        relay.send(["type": "result", "jobId": job.id, "ok": ok, "detail": detail ?? ""])
+    }
+
+    private func sendRelayResult(detail: String? = nil) {
+        guard let job = relayJob else { return }
+        relayJob = nil
+        var msg: [String: Any] = ["type": "result", "jobId": job.id, "ok": true]
+        if job.oldIP != "—" { msg["oldIP"] = job.oldIP }
+        if publicIP != "—" { msg["newIP"] = publicIP }
+        if let detail { msg["detail"] = detail }
+        relay.send(msg)
     }
 
     /// Callback from Shortcuts (x-success / x-cancel / x-error).
@@ -283,10 +364,12 @@ final class ProxyServer: ObservableObject {
         rotateStartedAt = nil
         if outcome == "rotate-done" {
             append("Rotate shortcut finished after \(elapsed)")
+            finishRelayJob(ok: true)
         } else {
             let msg = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "errorMessage" })?.value ?? ""
             append("Rotate shortcut \(outcome) after \(elapsed) \(msg)")
+            finishRelayJob(ok: false, detail: "shortcut \(outcome) \(msg)")
         }
         refreshIPs()
         refreshPublicIP()
@@ -307,6 +390,12 @@ final class ProxyServer: ObservableObject {
                         self.publicIP = ip
                     }
                     self.publicIPCheckedAt = Date()
+                    if self.relayJob?.awaitingIP == true {
+                        self.sendRelayResult()
+                    } else if ip != self.relayReportedIP {
+                        self.relay.send(["type": "ip", "publicIP": ip])
+                    }
+                    self.relayReportedIP = ip
                 case .failure(let error):
                     self.append("Public IP lookup failed: \(error.localizedDescription)")
                 }
