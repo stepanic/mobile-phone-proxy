@@ -11,7 +11,8 @@ iPhone 15 Pro s iOS 26.4.2, a Mac ga dohvaća preko Tailscalea (`100.71.146.11:8
 | Airplane mode ≥ ~64 s → nova javna IP | ✅ 7/7 (od toga 5/5 sa 91 s) |
 | Airplane mode ≤ 61 s → ista IP | ✅ 4/4 (20, 32, 61, 61 s) |
 | Okidač s Maca: `GET /__rotate` → Prečaci po URL-u | ✅ 4/4, ali **samo kad je aplikacija u prvom planu i nije uključen kiosk način** |
-| Okidač s Maca: potpisani iMessage → automatizacija → App Intent | ✅ izvan Assistive Accessa; ❌ **u Assistive Accessu nije okinulo** (uzrok nepotvrđen) |
+| Okidač s Maca: potpisani iMessage → automatizacija → App Intent | ✅ izvan Assistive Accessa; ❌ **u Assistive Accessu App Intent se ne pokrene** (0/3, poruke isporučene) |
+| **Relay** (Cloudflare Worker + WebSocket) → aplikacija → Prečaci po URL-u | ✅ 2/2 (97 s i 110 s), bez Tailscalea; aplikacija mora biti u prvom planu, bez kiosk načina |
 | Guided Access | ❌ blokira otvaranje Prečaca |
 | Assistive Access | ✅ vremenska automatizacija i iMessage `MPP-TEST` (bez App Intenta) rade |
 
@@ -129,25 +130,77 @@ Format: `MPP-ROTATE v1 <unix-ts> <nonce> <hex HMAC-SHA256(secret, "MPP-ROTATE|v1
 - **Guided Access kao kiosk**: blokira otvaranje Prečaca.
 - **Single App Mode**: traži nadzirani uređaj (MDM), dakle reset telefona.
 
+## Relay (Cloudflare Worker)
+
+Bilo koji servis u oblaku može zatražiti rotaciju, bez Tailscalea i bez
+iMessagea. Kod je u `relay/`, a deployan je na
+`https://mpp-relay.d-o-m.workers.dev` (Cloudflare račun D.O.M.).
+
+```mermaid
+sequenceDiagram
+  participant C as Pozivatelj (Mac, Worker, Lambda…)
+  participant W as Worker + Durable Object "iphone"
+  participant A as iPhone aplikacija
+  participant S as Prečac "Rotate IP"
+  A->>W: WebSocket /v1/phones/iphone/connect (Bearer token)
+  C->>W: POST /rotate {command: "MPP-ROTATE v1 ts nonce hmac"}
+  W->>A: {type: rotate, jobId, command}
+  A->>A: RotateAuth.verify (HMAC, prozor, nonce)
+  A->>W: ack (accepted / rejected: razlog), rotating
+  A->>S: shortcuts://x-callback-url/run-shortcut
+  Note over A,W: Airplane 91 s — WebSocket pada
+  S->>A: x-success (mobilephoneproxy://rotate-done)
+  A->>W: ponovno spajanje, hello, result {oldIP, newIP}
+  C->>W: GET /jobs/:id → done 86.33.92.13 → 86.33.82.209
+```
+
+- **Relay nije točka povjerenja.** Prosljeđuje istu potpisanu naredbu kao
+  iMessage put, a HMAC provjerava samo telefon. Relay provjerava samo oblik i
+  svježinu naredbe (±300 s) da rano odbaci smeće.
+- **Telefon se prijavljuje tokenom** `HMAC(tajna, "MPP-RELAY|v1|<phoneId>")`.
+  Izvodi se iz već uparene tajne, pa na telefonu ništa novo ne treba. Mac ga
+  ispisuje s `rotate-ip.sh --relay-token`, a u Workeru je u secretu
+  `PHONE_TOKENS` (JSON `{"iphone": "…", "sim": "…"}`). Sandučić postoji samo za
+  ID-jeve iz tog secreta, a ostali dobiju 404.
+- **Keepalive:** aplikacija svakih 25 s šalje tekst `ping`. Durable Object
+  odgovara `pong` automatski (`setWebSocketAutoResponse`), bez buđenja. Ako
+  `pong` izostane 70 s, aplikacija se ponovno spaja. Backoff je najviše 15 s,
+  a nova adresa na mobilnoj mreži odmah pokreće ponovno spajanje.
+- **Poslovi:** odjednom se izvodi jedan (inače 409). Dok je telefon offline,
+  posao čeka u redu, a nakon 6 min proglašava se neuspjelim. Stanja su
+  `queued → sent → accepted|rejected → rotating → done|failed`.
+- **Ograničenje ostaje:** aplikacija mora biti u prvom planu i ne smije biti u
+  Guided ni Assistive Accessu. Inače posao odmah završi kao `failed` s
+  razlogom „app is not in the foreground”.
+
+Korištenje s Maca: `macos/rotate-ip.sh --relay` (izlazni kodovi isti kao kod
+ostalih načina). Iz drugog servisa: složi naredbu kao `--sign` (tajna je
+potrebna), napravi `POST /v1/phones/iphone/rotate`, pa prati
+`GET /v1/phones/iphone/jobs/<jobId>`.
+
+Testovi:
+- `relay/test/smoke.mjs` s `wrangler dev` glumi i telefon i pozivatelja.
+- Simulator se spaja kao `sim` (build postavka `MPP_RELAY_PHONE_ID=sim`).
+  Zbog `simctl openurl` upita povratak iz prečaca glumi `/__callback/rotate-done`,
+  hook koji postoji samo u simulatoru.
+
+## Dijagnostika: `/__log`
+
+`GET /__log` vraća log aplikacije (`lines`) i trajni zapis svakog pokretanja
+„Verify Rotate Command” (`intentEvents`, u `UserDefaults`, preživljava novi
+proces). `rotate-ip.sh --imessage` ga čita 60 s nakon slanja. Ako se intent
+nije pokrenuo, šalje poruku ponovno (najviše 3 slanja). Ako ga je intent
+odbio, staje. Ako ga je prihvatio, zastoj je u lancu prečaca.
+
+Tako je utvrđeno da se **u Assistive Accessu App Intent uopće ne pokrene**:
+tri isporučene potpisane poruke u 18:08–18:10, a `intentEvents` je ostao
+prazan. Korisnik je odlučio da kiosk način nije nužan, pa je to ostavljeno.
+
 ## Otvoreno
 
-- **Potpisani iMessage u Assistive Accessu nije okinuo** (17:44, telefon nije
-  pao 5 min). Log aplikacije nije pročitan, pa se ne zna je li App Intent
-  odbio poruku, nije se pokrenuo, ili je zapeo neki nevidljivi upit. Sljedeći
-  korak je pročitati log (vidi `/__log` niže). Moguće rješenje je da sve akcije
-  budu u jednom prečacu, bez „Run Shortcut".
-- **`/__log` endpoint** i `lastRotateCommand` u `/__status` još ne postoje.
-  Log aplikacije trenutno se vidi samo na ekranu telefona.
-- **Ponovno slanje u `rotate-ip.sh --imessage`**: ako telefon ne padne u roku
-  od ~60 s, poslati novu poruku s novim nonceom.
-- **Vlastiti relay servis** (ideja korisnika): Cloudflare Worker ili mali
-  Node.js servis na koji bilo koji posao u oblaku (Worker, Lambda) pošalje
-  potpisani signal, a aplikacija ga povlači. Ograničenje koje se mora riješiti:
-  **aplikacija ne može sama upaliti Airplane mode**. Može samo otvoriti
-  Prečace po URL-u (u prvom planu, ne u Assistive/Guided Accessu) ili se
-  osloniti na automatizaciju. U Assistive Accessu za sada su dokazane samo
-  automatizacije (vrijeme, poruka), pa relay mora završiti okidačem koji
-  automatizacija vidi, npr. iMessageom koji relay šalje.
+- Ako Assistive Access ipak zatreba: izbaciti App Intent iz lanca, tako da
+  prečac radi `Get Contents of URL` na `http://127.0.0.1:8888/…` i aplikacija
+  sama provjeri potpis.
 - **Android** to može bez ovih zaobilaznica: Shizuku (ovlasti na razini ADB-a,
   bez roota) → `cmd connectivity airplane-mode enable/disable` iz same
   aplikacije, a kiosk se dobije pinanjem ekrana. Na uređaju još nije isprobano.
@@ -156,3 +209,4 @@ Format: `MPP-ROTATE v1 <unix-ts> <nonce> <hex HMAC-SHA256(secret, "MPP-ROTATE|v1
 
 - `README.md` → *Remote (phone not on your WiFi)*
 - `macos/rotate-ip.sh` (`--help`)
+- `relay/README.md`

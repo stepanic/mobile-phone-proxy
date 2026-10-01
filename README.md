@@ -101,6 +101,9 @@ windows/    Go source for the desktop build (no cgo, single static .exe)
 macos/      test_proxy.sh — quick smoke test from your laptop
             rotate-ip.sh  — rotate the iPhone's carrier IP (airplane-mode cycle)
 
+relay/      Cloudflare Worker + Durable Object that forwards signed rotate
+            commands from any cloud job to the app over a WebSocket
+
 docs/       Experiment notes — e.g. 2026-10-01-ios-ip-rotation.md
 ```
 
@@ -206,7 +209,8 @@ hole-punching), so throughput is fine for scraping but not low-latency work.
 Cycling airplane mode for ~91 s gets a new CGNAT public IP on Telemach HR
 mobile (shorter than ~61 s returns the same one). `macos/rotate-ip.sh`
 triggers it remotely through a user-made Shortcut, either over the tailnet
-(`GET /__rotate`) or by a signed iMessage (`--imessage`). Setup, measurements
+(`GET /__rotate`), by a signed iMessage (`--imessage`), or through the relay
+Worker in `relay/` (`--relay`, no tailnet needed). Setup, measurements
 and pitfalls: [docs/2026-10-01-ios-ip-rotation.md](docs/2026-10-01-ios-ip-rotation.md).
 
 ## Caveats
