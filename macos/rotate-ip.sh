@@ -162,8 +162,9 @@ print(d["status"], d.get("detail") or "", (d.get("oldIP") or "?") + " -> " + (d.
         done)
           old=$(printf '%s' "$j" | python3 -c 'import json,sys; print(json.load(sys.stdin)["oldIP"] or "")')
           new=$(printf '%s' "$j" | python3 -c 'import json,sys; print(json.load(sys.stdin)["newIP"] or "")')
-          echo "$(ts) back after $((SECONDS - start)) s: $old → $new"
-          if [ -n "$new" ] && [ "$new" != "$old" ]; then echo "NEW IP ✅"; exit 0; fi
+          echo "$(ts) back after $((SECONDS - start)) s: ${old:-?} → ${new:-?}"
+          if [ -z "$new" ] || [ -z "$old" ]; then echo "IP unknown — the phone could not look it up" >&2; exit 4; fi
+          if [ "$new" != "$old" ]; then echo "NEW IP ✅"; exit 0; fi
           echo "SAME IP ❌"; exit 2 ;;
         rejected) exit 3 ;;
         failed)   exit 4 ;;
