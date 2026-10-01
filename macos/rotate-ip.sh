@@ -14,6 +14,10 @@
 #               send, the app's /__log tells why: no "Verify Rotate Command" run
 #               → resend with a fresh nonce (up to 3 sends); rejected → stop;
 #               accepted → the stall is in the shortcut chain, keep waiting.
+#   --relay     POSTs the same signed command to the relay Worker
+#               (relay/, Cloudflare). The app holds a WebSocket to it, verifies
+#               the HMAC itself and runs the URL trigger, so it needs the app in
+#               the foreground. Works without the tailnet; reports via the job.
 #
 # Then waits for the proxy to drop and come back, and reports whether the
 # public IP actually changed.
@@ -24,6 +28,8 @@
 #   macos/rotate-ip.sh --pair [--phone host:port]               # fetch HMAC secret
 #                                                                 (tap "Pair Mac" first)
 #   macos/rotate-ip.sh --sign                                   # print a signed command
+#   macos/rotate-ip.sh --relay [--phone-id id]                  # via relay Worker
+#   macos/rotate-ip.sh --relay-token [--phone-id id]            # token for PHONE_TOKENS
 # <handle> is the phone's iMessage address (email or +385…); MPP_IMESSAGE_TO also works.
 # Exit: 0 new IP · 2 same IP · 3 request refused · 4 phone never dropped/returned
 set -uo pipefail
@@ -35,6 +41,8 @@ BACK_TIMEOUT=300          # seconds to wait for the phone after triggering
 RESEND_AFTER=60           # --imessage: seconds without a drop before checking /__log
 MAX_SENDS=3
 KC_SERVICE="mobile-phone-proxy-rotate"
+RELAY="${MPP_RELAY:-https://mpp-relay.d-o-m.workers.dev}"
+PHONE_ID="${MPP_PHONE_ID:-iphone}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,7 +50,10 @@ while [ $# -gt 0 ]; do
     --imessage) MODE=imessage; TO="${2:-$TO}"; shift 2 ;;
     --pair)     MODE=pair; shift ;;
     --sign)     MODE=sign; shift ;;
-    -h|--help)  sed -n '2,28p' "$0"; exit 0 ;;
+    --relay)    MODE=relay; shift ;;
+    --relay-token) MODE=relay-token; shift ;;
+    --phone-id) PHONE_ID="$2"; shift 2 ;;
+    -h|--help)  sed -n '2,34p' "$0"; exit 0 ;;
     *)          PHONE="$1"; shift ;;   # backwards compatible positional host:port
   esac
 done
@@ -92,14 +103,22 @@ print(out)' "$sent_at"
 
 secret_b64() { security find-generic-password -s "$KC_SERVICE" -a default -w 2>/dev/null; }
 
-sign_command() {
-  local b64 hexkey t nonce sig
+hex_key() {
+  local b64
   b64=$(secret_b64) || { echo "not paired — run: $0 --pair" >&2; return 1; }
-  hexkey=$(printf '%s' "$b64" | base64 -D | xxd -p -c 256)
+  printf '%s' "$b64" | base64 -D | xxd -p -c 256
+}
+
+hmac_hex() {  # hmac_hex <hexkey> <message>
+  printf '%s' "$2" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$1" | awk '{print $NF}'
+}
+
+sign_command() {
+  local hexkey t nonce sig
+  hexkey=$(hex_key) || return 1
   t=$(date +%s)
   nonce=$(openssl rand -hex 8)
-  sig=$(printf 'MPP-ROTATE|v1|%s|%s' "$t" "$nonce" |
-        openssl dgst -sha256 -mac HMAC -macopt "hexkey:$hexkey" | awk '{print $NF}')
+  sig=$(hmac_hex "$hexkey" "MPP-ROTATE|v1|$t|$nonce")
   printf 'MPP-ROTATE v1 %s %s %s' "$t" "$nonce" "$sig"
 }
 
@@ -115,6 +134,42 @@ case "$MODE" in
     exit 0 ;;
   sign)
     sign_command && echo; exit $? ;;
+  relay-token)
+    # The phone derives the same value from the shared secret (RotateAuth).
+    hexkey=$(hex_key) || exit 3
+    hmac_hex "$hexkey" "MPP-RELAY|v1|$PHONE_ID"; echo; exit 0 ;;
+  relay)
+    cmd=$(sign_command) || exit 3
+    base="$RELAY/v1/phones/$PHONE_ID"
+    resp=$(curl -s -m 15 -w '\n%{http_code}' -X POST -H 'Content-Type: application/json' \
+      -d "{\"command\":\"$cmd\"}" "$base/rotate")
+    code=${resp##*$'\n'}; body=${resp%$'\n'*}
+    [ "$code" = "202" ] || { echo "$(ts) relay refused (HTTP $code): $body" >&2; exit 3; }
+    job=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')
+    echo "$(ts) job $job: $(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], "(phone connected)" if d["phoneConnected"] else "(phone offline — queued)")')"
+    last=""
+    start=$SECONDS
+    while [ $((SECONDS - start)) -lt 400 ]; do
+      sleep 3
+      j=$(curl -s -m 10 "$base/jobs/$job") || continue
+      line=$(printf '%s' "$j" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print(d["status"], d.get("detail") or "", (d.get("oldIP") or "?") + " -> " + (d.get("newIP") or "?"))' 2>/dev/null) || continue
+      st=${line%% *}
+      [ "$line" != "$last" ] && echo "$(ts) $line" && last=$line
+      case "$st" in
+        done)
+          old=$(printf '%s' "$j" | python3 -c 'import json,sys; print(json.load(sys.stdin)["oldIP"] or "")')
+          new=$(printf '%s' "$j" | python3 -c 'import json,sys; print(json.load(sys.stdin)["newIP"] or "")')
+          echo "$(ts) back after $((SECONDS - start)) s: $old → $new"
+          if [ -n "$new" ] && [ "$new" != "$old" ]; then echo "NEW IP ✅"; exit 0; fi
+          echo "SAME IP ❌"; exit 2 ;;
+        rejected) exit 3 ;;
+        failed)   exit 4 ;;
+      esac
+    done
+    echo "$(ts) job did not finish" >&2; exit 4 ;;
 esac
 
 old=$(ip_via_proxy)
