@@ -81,9 +81,9 @@ if [ "$MODE" = imessage ]; then
   [ -n "$TO" ] || { echo "--imessage needs the phone's iMessage handle (or MPP_IMESSAGE_TO)" >&2; exit 3; }
   cmd=$(sign_command) || exit 3
   osascript - "$TO" "$cmd" <<'EOF' || { echo "$(ts) Messages failed to send" >&2; exit 3; }
-on run {handle, body}
+on run {recipient, body}
   tell application "Messages"
-    send body to participant handle of (1st account whose service type = iMessage)
+    send body to participant recipient of (1st account whose service type = iMessage)
   end tell
 end run
 EOF
