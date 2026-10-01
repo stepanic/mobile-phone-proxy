@@ -18,6 +18,17 @@ final class ProxyServer: ObservableObject {
     /// Set while the "Rotate IP" shortcut is believed to be running.
     @Published var rotateStartedAt: Date?
 
+    @Published var isPaired = RotateAuth.isPaired
+    @Published var pairingOpenUntil: Date?
+    @Published var lastRotateCommand: String?
+
+    /// The live instance, for App Intents (they run in-process but outside SwiftUI).
+    static weak var current: ProxyServer?
+
+    init() {
+        Self.current = self
+    }
+
     /// Name of the user-created Shortcut: Airplane ON → Wait 61 s → Airplane OFF.
     static let rotateShortcutName = "Rotate IP"
 
@@ -143,6 +154,7 @@ final class ProxyServer: ObservableObject {
         }
         tailscaleIP = NetworkInterface.tailscaleAddress() ?? "—"
         guidedAccess = UIAccessibility.isGuidedAccessEnabled
+        if let until = pairingOpenUntil, until <= Date() { pairingOpenUntil = nil }
     }
 
     // MARK: - Control endpoint (GET /__status, GET /__rotate)
@@ -153,6 +165,19 @@ final class ProxyServer: ObservableObject {
             return ("200 OK", statusJSON())
         case "/__rotate":
             return requestRotate()
+        case "/__pair":
+            return pair()
+        #if targetEnvironment(simulator)
+        case "/__open-pairing":
+            // Simulator-only stand-in for tapping "Pair Mac".
+            openPairingWindow()
+            return ("200 OK", #"{"ok":true}"#)
+        case let p where p.hasPrefix("/__verify/"):
+            // Simulator-only hook to test Mac-side signing against CryptoKit.
+            let msg = String(p.dropFirst("/__verify/".count)).removingPercentEncoding ?? ""
+            let v = RotateAuth.verify(msg)
+            return ("200 OK", "{\"verdict\":\"\(v.description)\"}")
+        #endif
         default:
             return ("404 Not Found", #"{"error":"unknown path"}"#)
         }
@@ -167,6 +192,7 @@ final class ProxyServer: ObservableObject {
             "appActive": UIApplication.shared.applicationState == .active,
             "guidedAccess": UIAccessibility.isGuidedAccessEnabled,
             "rotating": rotateStartedAt != nil,
+            "paired": RotateAuth.isPaired,
         ]
         if let at = publicIPCheckedAt { d["publicIPCheckedAt"] = ISO8601DateFormatter().string(from: at) }
         d.merge(extra) { _, new in new }
@@ -204,6 +230,39 @@ final class ProxyServer: ObservableObject {
             }
         }
         return ("202 Accepted", statusJSON(extra: ["started": true]))
+    }
+
+    // MARK: - iMessage rotate command pairing
+
+    /// Opens a short window during which GET /__pair hands the HMAC secret to
+    /// the Mac. Requiring a tap on the phone keeps other tailnet devices from
+    /// silently fetching it.
+    func openPairingWindow() {
+        pairingOpenUntil = Date().addingTimeInterval(120)
+        append("Pairing window open for 2 min — run: macos/rotate-ip.sh --pair")
+    }
+
+    func unpair() {
+        RotateAuth.unpair()
+        isPaired = false
+        append("Unpaired — signed rotate commands now rejected")
+    }
+
+    private func pair() -> (status: String, json: String) {
+        guard let until = pairingOpenUntil, until > Date() else {
+            return ("403 Forbidden", #"{"error":"pairing window closed — tap 'Pair Mac' in the app"}"#)
+        }
+        let secret = RotateAuth.secretForPairing()
+        pairingOpenUntil = nil
+        isPaired = true
+        append("Paired with Mac — signed iMessage rotate commands enabled")
+        return ("200 OK", "{\"secret\":\"\(secret.base64EncodedString())\"}")
+    }
+
+    func rotateCommandVerified(_ verdict: RotateAuth.Verdict) {
+        let ts = Self.timeFormatter.string(from: Date())
+        lastRotateCommand = "\(ts) \(verdict.description)"
+        append("iMessage rotate command \(verdict.description)")
     }
 
     /// Callback from Shortcuts (x-success / x-cancel / x-error).

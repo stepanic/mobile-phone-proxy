@@ -24,7 +24,14 @@ struct ContentView: View {
                     LabeledContent {
                         HStack(spacing: 6) {
                             if server.isCheckingPublicIP { ProgressView().controlSize(.mini) }
-                            Text(server.publicIP).textSelection(.enabled)
+                            // With no cellular address the last public IP is
+                            // stale (e.g. mid airplane-mode rotation).
+                            if server.cellularIP == "—" && server.publicIP != "—" {
+                                Text("offline · was \(server.publicIP)")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(server.publicIP).textSelection(.enabled)
+                            }
                         }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
@@ -130,6 +137,33 @@ struct ContentView: View {
                             }
                             .font(.caption)
                             .foregroundStyle(.orange)
+                        }
+                    }
+                }
+
+                Section("iMessage rotate") {
+                    LabeledContent("Mac paired", value: server.isPaired ? "yes" : "no")
+                    if let last = server.lastRotateCommand {
+                        LabeledContent("Last command", value: last)
+                    }
+                    if let until = server.pairingOpenUntil, until > Date() {
+                        Text("Pairing open until \(until.formatted(date: .omitted, time: .standard)) — run macos/rotate-ip.sh --pair on the Mac")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else {
+                        Button {
+                            server.openPairingWindow()
+                        } label: {
+                            Label(server.isPaired ? "Re-pair Mac (2 min window)" : "Pair Mac (2 min window)",
+                                  systemImage: "link")
+                        }
+                        .disabled(!server.isRunning)
+                    }
+                    if server.isPaired {
+                        Button(role: .destructive) {
+                            server.unpair()
+                        } label: {
+                            Label("Unpair", systemImage: "xmark.circle")
                         }
                     }
                 }

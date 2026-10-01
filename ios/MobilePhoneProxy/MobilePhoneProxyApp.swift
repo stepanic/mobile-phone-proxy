@@ -11,11 +11,12 @@ struct MobilePhoneProxyApp: App {
                 .onOpenURL { url in server.handleCallback(url) }
                 .onAppear {
                     UIApplication.shared.isIdleTimerDisabled = true
-                    #if targetEnvironment(simulator)
-                    // Auto-start in simulator so xcodebuild-driven smoke tests
-                    // don't need UI automation.
-                    server.start()
-                    #endif
+                    // Auto-start a second after launch; the user can still stop it.
+                    // (Also lets xcodebuild-driven simulator smoke tests run
+                    // without UI automation.)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        if !server.isRunning { server.start() }
+                    }
                 }
         }
     }
