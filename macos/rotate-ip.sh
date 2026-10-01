@@ -31,12 +31,26 @@ echo "$(ts) rotate started — waiting for the phone to drop and come back"
 
 start=$SECONDS
 dropped=0
+misses=0
 while [ $((SECONDS - start)) -lt $BACK_TIMEOUT ]; do
   sleep 3
   ip=$(ip_via_proxy)
   if [ -z "$ip" ]; then
-    [ $dropped -eq 0 ] && echo "$(ts) phone offline (airplane mode)"
-    dropped=1
+    # One failed probe can be a transient DERP hiccup; require two in a row.
+    misses=$((misses + 1))
+    if [ $dropped -eq 0 ] && [ $misses -ge 2 ]; then
+      echo "$(ts) phone offline (airplane mode)"
+      dropped=1
+    fi
+  elif [ $dropped -eq 0 ]; then
+    misses=0
+    # Still online. If the app already cleared its "rotating" flag, iOS
+    # refused to open Shortcuts (e.g. Guided Access) — no point waiting.
+    if [ $((SECONDS - start)) -ge 10 ] &&
+       curl -s -m 6 "$PROXY/__status" | grep -q '"rotating":false'; then
+      echo "$(ts) rotation aborted on the phone (Shortcuts did not open — Guided Access on?)" >&2
+      exit 3
+    fi
   elif [ $dropped -eq 1 ]; then
     echo "$(ts) back after $((SECONDS - start)) s: $old → $ip"
     if [ "$ip" != "$old" ]; then echo "NEW IP ✅"; exit 0; fi
