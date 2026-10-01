@@ -36,6 +36,7 @@ async function next(inbox, pred, ms = 3000) {
   throw new Error("timed out waiting for message");
 }
 
+assert.equal((await fetch(`${RELAY}/v1/phones/nobody`)).status, 404, "unknown phone");
 let r = await fetch(base).then((r) => r.json());
 assert.equal(r.connected, false);
 

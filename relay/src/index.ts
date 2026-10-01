@@ -47,6 +47,9 @@ export default {
     const m = url.pathname.match(/^\/v1\/phones\/([A-Za-z0-9_-]{1,64})(\/.*)?$/);
     if (!m) return json({ error: "not found" }, 404);
     const [, phoneId, rest = ""] = m;
+    // Only known phones get a Durable Object; anything else would let strangers
+    // create storage under arbitrary names.
+    if (!(phoneId in phoneTokens(env))) return json({ error: "unknown phone" }, 404);
     const stub = env.PHONE.getByName(phoneId);
 
     if (rest === "/connect") {
@@ -246,13 +249,15 @@ function checkCommand(command: string): string | null {
 }
 
 async function phoneTokenValid(env: Env, phoneId: string, auth: string | null): Promise<boolean> {
-  let tokens: Record<string, string>;
-  try { tokens = JSON.parse(env.PHONE_TOKENS ?? "{}"); } catch { return false; }
-  const expected = tokens[phoneId];
+  const expected = phoneTokens(env)[phoneId];
   const given = auth?.match(/^Bearer (\S+)$/)?.[1];
   if (!expected || !given) return false;
   const a = new TextEncoder().encode(expected), b = new TextEncoder().encode(given);
   return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b);
+}
+
+function phoneTokens(env: Env): Record<string, string> {
+  try { return JSON.parse(env.PHONE_TOKENS ?? "{}"); } catch { return {}; }
 }
 
 function iso(ms: unknown): string | null {
