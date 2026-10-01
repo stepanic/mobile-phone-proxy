@@ -99,6 +99,9 @@ windows/    Go source for the desktop build (no cgo, single static .exe)
             – README.md                  Build + run instructions
 
 macos/      test_proxy.sh — quick smoke test from your laptop
+            rotate-ip.sh  — rotate the iPhone's carrier IP (airplane-mode cycle)
+
+docs/       Experiment notes — e.g. 2026-10-01-ios-ip-rotation.md
 ```
 
 ## Build
@@ -197,6 +200,14 @@ change, the listener already binds all interfaces (including `utun*`). Then:
 The phone egresses over cellular; the Mac reaches it over the tailnet. Note
 that with WiFi off Tailscale falls back to a DERP relay (CGNAT blocks direct
 hole-punching), so throughput is fine for scraping but not low-latency work.
+
+### Rotating the carrier IP (iOS)
+
+Cycling airplane mode for ~91 s gets a new CGNAT public IP on Telemach HR
+mobile (shorter than ~61 s returns the same one). `macos/rotate-ip.sh`
+triggers it remotely through a user-made Shortcut, either over the tailnet
+(`GET /__rotate`) or by a signed iMessage (`--imessage`). Setup, measurements
+and pitfalls: [docs/2026-10-01-ios-ip-rotation.md](docs/2026-10-01-ios-ip-rotation.md).
 
 ## Caveats
 
